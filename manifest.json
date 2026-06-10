@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "Udemy Auto-Completer",
+  "version": "1.0",
+  "description": "Tự động hoàn thành các khóa học trên samsungu.udemy.com",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://samsungu.udemy.com/*"
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://samsungu.udemy.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
