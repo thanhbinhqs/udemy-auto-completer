@@ -8,6 +8,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   const btnStart = document.getElementById('btn-start');
   const statusTextEl = document.getElementById('status-text');
   const errorDisplayEl = document.getElementById('error-display');
+  const btnStartBulk = document.getElementById('btn-start-bulk');
+  const coursesSection = document.getElementById('courses-section');
+  const coursesListEl = document.getElementById('courses-list');
+  const coursesCounterEl = document.getElementById('courses-counter');
+  const progressSection = document.querySelector('.progress-section');
+  const listSection = document.querySelector('.list-section:not(#courses-section)');
+  const courseIdContainer = document.getElementById('course-id-container');
 
   let activeTab = null;
 
@@ -137,6 +144,48 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
+  // Đăng ký sự kiện Click nút bấm hoàn thành hàng loạt (Bắt đầu / Tạm dừng hoàn thành toàn bộ)
+  if (btnStartBulk) {
+    btnStartBulk.addEventListener('click', () => {
+      if (!activeTab) return;
+
+      const currentAction = btnStartBulk.getAttribute('data-action');
+      btnStartBulk.disabled = true;
+
+      if (currentAction === 'stop-bulk') {
+        statusTextEl.textContent = 'Đang yêu cầu dừng chạy hàng loạt...';
+        chrome.tabs.sendMessage(activeTab.id, { action: 'STOP_BULK' }, (response) => {
+          if (chrome.runtime.lastError) {
+            showError('Không thể gửi lệnh dừng. Vui lòng tải lại trang.');
+            btnStartBulk.disabled = false;
+            return;
+          }
+          if (response && response.success) {
+            statusTextEl.textContent = 'Đang tạm dừng hàng loạt...';
+          } else {
+            showError(response?.message || 'Có lỗi xảy ra khi dừng.');
+            btnStartBulk.disabled = false;
+          }
+        });
+      } else {
+        statusTextEl.textContent = 'Đang gửi lệnh bắt đầu chạy hàng loạt...';
+        chrome.tabs.sendMessage(activeTab.id, { action: 'START_BULK' }, (response) => {
+          if (chrome.runtime.lastError) {
+            showError('Không thể gửi lệnh đến trang Udemy. Vui lòng tải lại trang.');
+            btnStartBulk.disabled = false;
+            return;
+          }
+          if (response && response.success) {
+            statusTextEl.textContent = 'Đã bắt đầu tiến trình chạy hàng loạt...';
+          } else {
+            showError(response?.message || 'Có lỗi xảy ra khi bắt đầu.');
+            btnStartBulk.disabled = false;
+          }
+        });
+      }
+    });
+  }
+
   // Lắng nghe cập nhật trạng thái thời gian thực từ Content Script
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // Chỉ xử lý tin nhắn từ tab hiện tại để tránh xung đột tab khác
@@ -199,13 +248,68 @@ document.addEventListener('DOMContentLoaded', async () => {
       courseId,
       courseTitle,
       lectures,
+      enrolledCourses,
       completedCount,
       totalCount,
       progressPercent,
       isFinished,
       isRunning,
+      isBulkRunning,
       currentLog
     } = data;
+
+    // Chế độ trang ngoài player (danh sách khóa học)
+    if (!courseId) {
+      if (progressSection) progressSection.style.display = 'none';
+      if (listSection) listSection.style.display = 'none';
+      if (btnStart) btnStart.style.display = 'none';
+      if (courseIdContainer) courseIdContainer.style.display = 'none';
+      
+      if (coursesSection) coursesSection.style.display = 'flex';
+      if (btnStartBulk) btnStartBulk.style.display = 'flex';
+
+      // Cập nhật giao diện nút hoàn thành hàng loạt
+      if (btnStartBulk) {
+        btnStartBulk.disabled = false;
+        if (isBulkRunning) {
+          btnStartBulk.setAttribute('data-action', 'stop-bulk');
+          btnStartBulk.style.background = 'linear-gradient(135deg, #ef4444 0%, #f97316 100%)';
+          btnStartBulk.style.boxShadow = '0 4px 15px rgba(239, 68, 68, 0.4)';
+          btnStartBulk.innerHTML = `
+            <svg style="width: 14px; height: 14px; fill: currentColor; margin-right: 6px;" viewBox="0 0 24 24">
+              <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+            </svg>Tạm dừng hoàn thành toàn bộ
+          `;
+        } else {
+          btnStartBulk.setAttribute('data-action', 'start-bulk');
+          btnStartBulk.style.background = '';
+          btnStartBulk.style.boxShadow = '';
+          // Chỉ bật nút nếu có ít nhất 1 khóa học chưa hoàn thành
+          const hasIncomplete = enrolledCourses && enrolledCourses.some(c => Math.round(c.completionPercentage || 0) < 100);
+          btnStartBulk.disabled = !hasIncomplete;
+          btnStartBulk.innerHTML = `
+            <svg style="width: 14px; height: 14px; fill: currentColor; margin-right: 6px;" viewBox="0 0 24 24">
+              <path d="M8 5v14l11-7z"/>
+            </svg>Hoàn thành toàn bộ các khóa học
+          `;
+        }
+      }
+
+      courseTitleEl.textContent = 'Khóa học của tôi';
+      courseIdEl.textContent = 'ID: Không có';
+      if (currentLog) statusTextEl.textContent = currentLog;
+      renderCoursesList(enrolledCourses || []);
+      return;
+    }
+
+    // Chế độ trang player (học đơn lẻ)
+    if (progressSection) progressSection.style.display = 'flex';
+    if (listSection) listSection.style.display = 'flex';
+    if (btnStart) btnStart.style.display = 'flex';
+    if (courseIdContainer) courseIdContainer.style.display = 'block';
+    
+    if (coursesSection) coursesSection.style.display = 'none';
+    if (btnStartBulk) btnStartBulk.style.display = 'none';
 
     // Tên khóa học và ID
     courseTitleEl.textContent = courseTitle || 'Khóa học Udemy';
@@ -346,6 +450,51 @@ document.addEventListener('DOMContentLoaded', async () => {
       case 'practice': return 'Thực hành';
       default: return type || 'Bài học';
     }
+  }
+
+  // Vẽ danh sách khóa học
+  function renderCoursesList(courses) {
+    if (coursesCounterEl) {
+      coursesCounterEl.textContent = `${courses.length} khóa học`;
+    }
+
+    if (!coursesListEl) return;
+
+    if (courses.length === 0) {
+      coursesListEl.innerHTML = `
+        <div style="padding: 20px; text-align: center; color: var(--text-muted); font-size: 11px;">
+          Đang tải danh sách khóa học...
+        </div>
+      `;
+      return;
+    }
+
+    coursesListEl.innerHTML = '';
+    courses.forEach(course => {
+      const card = document.createElement('a');
+      card.className = 'course-card';
+      const learnUrl = course.urlLanding.endsWith('/') ? course.urlLanding + 'learn/' : course.urlLanding + '/learn/';
+      card.href = 'https://samsungu.udemy.com' + learnUrl;
+      card.target = '_blank';
+
+      const percent = Math.min(100, Math.max(0, Math.round(course.completionPercentage || 0)));
+
+      card.innerHTML = `
+        <img class="course-card-img" src="${course.imageUrl || 'https://via.placeholder.com/240x135'}" alt="${course.title}">
+        <div class="course-card-details">
+          <div class="course-card-title" title="${course.title}">${course.title}</div>
+          <div class="course-card-instructors">${course.instructors || 'Giảng viên Udemy'}</div>
+          <div class="course-card-progress">
+            <div class="course-card-progress-bar">
+              <div class="course-card-progress-fill" style="width: ${percent}%"></div>
+            </div>
+            <div class="course-card-progress-text">${percent}%</div>
+          </div>
+        </div>
+      `;
+
+      coursesListEl.appendChild(card);
+    });
   }
 
   function showError(msg) {

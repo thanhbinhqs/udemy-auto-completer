@@ -556,6 +556,90 @@
       color: var(--secondary);
       background: var(--glass-bg);
     }
+
+    /* Course Card Item */
+    .course-card {
+      display: flex;
+      gap: 12px;
+      padding: 10px;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid var(--glass-border);
+      border-radius: 10px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      text-decoration: none;
+      color: inherit;
+    }
+
+    .course-card:hover {
+      background: rgba(255, 255, 255, 0.06);
+      border-color: var(--secondary);
+      transform: translateY(-1px);
+    }
+
+    .course-card-img {
+      width: 80px;
+      height: 45px;
+      border-radius: 6px;
+      object-fit: cover;
+      border: 1px solid var(--glass-border);
+      flex-shrink: 0;
+    }
+
+    .course-card-details {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex-grow: 1;
+      min-width: 0;
+    }
+
+    .course-card-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-main);
+      line-height: 1.3;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .course-card-instructors {
+      font-size: 9px;
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .course-card-progress {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 2px;
+    }
+
+    .course-card-progress-bar {
+      flex-grow: 1;
+      height: 4px;
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .course-card-progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--primary), var(--secondary));
+      border-radius: 2px;
+    }
+
+    .course-card-progress-text {
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--secondary);
+      flex-shrink: 0;
+    }
   </style>
 </head>
 <body>
@@ -621,6 +705,19 @@
       </div>
     </div>
 
+    <!-- Enrolled Courses List (Home Page View) -->
+    <div id="courses-section" class="list-section" style="display: none;">
+      <div class="list-header">
+        <span>Khóa học của tôi</span>
+        <span id="courses-counter">0 khóa học</span>
+      </div>
+      <div id="courses-list" class="item-list" style="max-height: 250px;">
+        <div style="padding: 20px; text-align: center; color: var(--text-muted); font-size: 11px;">
+          Đang tải danh sách khóa học...
+        </div>
+      </div>
+    </div>
+
     <!-- Controls -->
     <div class="controls">
       <button id="btn-start" class="btn-start" disabled>
@@ -629,6 +726,14 @@
         </svg>
         Bắt đầu hoàn thành
       </button>
+      
+      <button id="btn-start-bulk" class="btn-start" style="display: none;">
+        <svg style="width: 14px; height: 14px; fill: currentColor;" viewBox="0 0 24 24">
+          <path d="M8 5v14l11-7z"/>
+        </svg>
+        Hoàn thành toàn bộ khóa học
+      </button>
+      
       <div id="status-text" class="status-log">Chờ lệnh từ bạn...</div>
     </div>
 

@@ -3,7 +3,9 @@ const state = {
   courseId: null,
   courseTitle: '',
   lectures: [], // Danh sách các bài học trích xuất được
+  enrolledCourses: [], // Danh sách khóa học đang theo học
   isRunning: false,
+  isBulkRunning: false,
   isFinished: false,
   currentLog: 'Sẵn sàng...',
   completedCount: 0,
@@ -56,7 +58,9 @@ function resetState() {
   state.courseId = null;
   state.courseTitle = '';
   state.lectures = [];
+  state.enrolledCourses = [];
   state.isRunning = false;
+  state.isBulkRunning = false;
   state.isFinished = false;
   state.currentLog = 'Sẵn sàng...';
   state.completedCount = 0;
@@ -178,8 +182,17 @@ function waitForCourseId(timeout = 15000) {
 
 // Khởi tạo lấy thông tin khóa học từ DOM
 async function init() {
-  console.log('[Udemy Auto-Completer] Đang chờ giao diện khóa học tải...');
+  const isPlayerPage = location.pathname.includes('/learn/');
   
+  if (!isPlayerPage) {
+    console.log('[Udemy Auto-Completer] Đang ở trang ngoài player. Tiến hành tải danh sách khóa học...');
+    state.courseId = null;
+    state.lectures = [];
+    await fetchEnrolledCourses();
+    return;
+  }
+
+  console.log('[Udemy Auto-Completer] Đang chờ giao diện khóa học tải...');
   try {
     // Đợi tối đa 15 giây lấy Course ID bằng cơ chế quét thông minh đa phương thức
     state.courseId = await waitForCourseId(15000);
@@ -201,6 +214,219 @@ async function init() {
     state.currentLog = 'Vui lòng mở trang học tập (Player) của khóa học để extension bắt đầu.';
     broadcastState();
   }
+}
+
+// Lấy danh sách khóa học của user hiện tại
+async function fetchEnrolledCourses() {
+  state.currentLog = 'Đang tải danh sách khóa học của bạn...';
+  broadcastState();
+
+  const csrfToken = getCsrfToken();
+  const headers = {
+    'Content-Type': 'application/json',
+    'X-Requested-With': 'XMLHttpRequest'
+  };
+  if (csrfToken) {
+    headers['X-Csrf-Token'] = csrfToken;
+  }
+
+  const query = `
+    query enrolledCourses($page: Int!, $pageSize: MaxResultsPerPage!) {
+      me {
+        enrollments {
+          courseEnrollments(page: $page, pageSize: $pageSize) {
+            completionPercentage
+            lastAccessedTime
+            enrollmentTime
+            archiveTime
+            course {
+              id
+              title
+              images {
+                px240x135
+                px480x270
+              }
+              urlCourseLanding
+              instructors {
+                id
+                name
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  try {
+    const response = await fetch('/api/2024-01/graphql/', {
+      method: 'POST',
+      headers: headers,
+      body: JSON.stringify({
+        query: query,
+        variables: {
+          page: 0,
+          pageSize: 100
+        }
+      })
+    });
+
+    if (!response.ok) {
+      if (checkAuthError(response, 'Tải danh sách khóa học (Enrolled Courses)')) {
+        throw new Error('AUTH_ERROR');
+      }
+      throw new Error(`Lỗi HTTP! Trạng thái: ${response.status}`);
+    }
+
+    const result = await response.json();
+    const enrollments = result.data?.me?.enrollments?.courseEnrollments || [];
+    
+    state.enrolledCourses = enrollments.map(e => {
+      const c = e.course;
+      return {
+        id: c.id,
+        title: c.title,
+        completionPercentage: e.completionPercentage,
+        imageUrl: c.images?.px240x135 || c.images?.px480x270 || '',
+        urlLanding: c.urlCourseLanding,
+        instructors: c.instructors?.map(inst => inst.name).join(', ') || ''
+      };
+    });
+
+    console.log('[Udemy Auto-Completer] Enrolled courses loaded:', state.enrolledCourses);
+    state.currentLog = `Đã tải xong ${state.enrolledCourses.length} khóa học.`;
+    broadcastState();
+  } catch (err) {
+    console.error('[Udemy Auto-Completer] Error loading enrolled courses:', err);
+    if (err.message === 'AUTH_ERROR') {
+      state.currentLog = 'Phiên làm việc hết hạn hoặc bị logout. Vui lòng đăng nhập lại Udemy!';
+    } else {
+      state.currentLog = 'Không thể tải danh sách khóa học của bạn.';
+    }
+    broadcastState();
+  }
+}
+
+// Hoàn thành toàn bộ các khóa học đang theo học
+async function startBulkAutoComplete() {
+  if (state.isBulkRunning) return;
+  state.isBulkRunning = true;
+  state.isRunning = true;
+  state.isFinished = false;
+  
+  state.currentLog = 'Bắt đầu hoàn thành toàn bộ khóa học...';
+  broadcastState();
+
+  // Tải lại danh sách khóa học trước để cập nhật tiến độ mới nhất
+  await fetchEnrolledCourses();
+
+  // Lọc ra danh sách các khóa học chưa hoàn thành (< 100%)
+  const incompleteCourses = state.enrolledCourses.filter(c => Math.round(c.completionPercentage || 0) < 100);
+  console.log(`[Udemy Auto-Completer] Found ${incompleteCourses.length} incomplete courses to process.`, incompleteCourses);
+
+  for (let idx = 0; idx < incompleteCourses.length; idx++) {
+    if (!state.isBulkRunning) break;
+
+    const course = incompleteCourses[idx];
+    state.courseId = course.id;
+    state.courseTitle = course.title;
+    
+    state.currentLog = `[Khóa ${idx + 1}/${incompleteCourses.length}] Bắt đầu: ${course.title}`;
+    broadcastState();
+
+    // 1. Tải curriculum cho khóa học hiện tại
+    try {
+      await fetchCurriculum();
+    } catch (err) {
+      console.error(`[Udemy Auto-Completer] Lỗi tải curriculum cho khóa học ${course.id}:`, err);
+      continue;
+    }
+
+    // 2. Tự động hoàn thành các bài học trong khóa học hiện tại
+    const pendingLectures = state.lectures.filter(l => l.status === 'pending');
+    console.log(`[Udemy Auto-Completer] Processing ${pendingLectures.length} pending items for ${course.title}`);
+
+    for (let i = 0; i < pendingLectures.length; i++) {
+      if (!state.isBulkRunning) break;
+
+      const lec = pendingLectures[i];
+      const targetLec = state.lectures.find(l => l.id === lec.id);
+      if (targetLec) targetLec.status = 'running';
+
+      state.currentLog = `[Khóa ${idx + 1}/${incompleteCourses.length}] ${course.title} -> Đang học: ${lec.title}`;
+      broadcastState();
+
+      const success = await markAsCompleted(lec);
+
+      if (!state.isBulkRunning) {
+        if (targetLec) targetLec.status = 'pending';
+        break;
+      }
+
+      if (success) {
+        if (targetLec) targetLec.status = 'done';
+      } else {
+        if (targetLec) targetLec.status = 'pending';
+      }
+
+      // Cập nhật lại % hoàn thành của khóa học hiện tại trong danh sách enrolledCourses
+      calculateProgress();
+      const currentCourseInList = state.enrolledCourses.find(c => c.id === course.id);
+      if (currentCourseInList) {
+        currentCourseInList.completionPercentage = state.progressPercent;
+      }
+      broadcastState();
+
+      // Delay an toàn giữa các bài học
+      if (i < pendingLectures.length - 1 && state.isBulkRunning) {
+        const minMs = Math.round(config.minDelay * 1000);
+        const maxMs = Math.round(config.maxDelay * 1000);
+        const randomDelay = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
+
+        if (randomDelay < 1000) {
+          await sleep(randomDelay);
+        } else {
+          const seconds = Math.floor(randomDelay / 1000);
+          const msPart = randomDelay % 1000;
+          for (let sec = seconds; sec > 0; sec--) {
+            if (!state.isBulkRunning) break;
+            state.currentLog = `[Khóa ${idx + 1}/${incompleteCourses.length}] ${course.title} -> Chờ ${sec} giây để an toàn...`;
+            broadcastState();
+            await sleep(1000);
+          }
+          if (state.isBulkRunning && msPart > 0) {
+            await sleep(msPart);
+          }
+        }
+      }
+    }
+
+    // Sau khi kết thúc một khóa học, nghỉ 5 giây trước khi sang khóa học tiếp theo để tránh spam
+    if (idx < incompleteCourses.length - 1 && state.isBulkRunning) {
+      for (let sec = 5; sec > 0; sec--) {
+        if (!state.isBulkRunning) break;
+        state.currentLog = `Đã xong khóa học! Chuyển sang khóa học sau trong ${sec} giây...`;
+        broadcastState();
+        await sleep(1000);
+      }
+    }
+  }
+
+  const wasInterrupted = !state.isBulkRunning;
+  state.isBulkRunning = false;
+  state.isRunning = false;
+  state.courseId = null; // Reset courseId player tạm thời
+  state.lectures = [];
+
+  // Tải lại danh sách khóa học lần cuối để cập nhật trạng thái chuẩn xác từ API
+  await fetchEnrolledCourses();
+
+  if (wasInterrupted) {
+    state.currentLog = 'Đã tạm dừng hoàn thành hàng loạt.';
+  } else {
+    state.currentLog = 'Hoàn thành toàn bộ các khóa học!';
+  }
+  broadcastState();
 }
 
 // Lấy danh sách bài học (Curriculum) từ API Udemy
@@ -757,11 +983,13 @@ function getSerializableState() {
     courseId: state.courseId,
     courseTitle: state.courseTitle,
     lectures: state.lectures,
+    enrolledCourses: state.enrolledCourses,
     completedCount: state.completedCount,
     totalCount: state.totalCount,
     progressPercent: state.progressPercent,
     isFinished: state.isFinished,
     isRunning: state.isRunning,
+    isBulkRunning: state.isBulkRunning,
     currentLog: state.currentLog
   };
 }
@@ -780,31 +1008,14 @@ function broadcastState() {
 // Nhận tin nhắn điều khiển từ Popup UI
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'GET_STATUS') {
-    if (state.courseId) {
-      // Nếu đã có courseId nhưng chưa tải xong danh sách, tải lại
-      if (state.lectures.length === 0) {
-        fetchCurriculum()
-          .then(() => sendResponse({ success: true, data: getSerializableState() }))
-          .catch(err => sendResponse({ success: false, message: err.message }));
-        return true; // Giữ kết nối async
-      }
-      sendResponse({ success: true, data: getSerializableState() });
-    } else {
-      // Thử quét lại DOM nếu chưa nhận diện được
-      init()
-        .then(() => {
-          if (state.courseId) {
-            sendResponse({ success: true, data: getSerializableState() });
-          } else {
-            sendResponse({ 
-              success: false, 
-              message: 'Không tìm thấy ID khóa học. Vui lòng mở trang học tập của Udemy (chứa giao diện danh sách bài giảng ở cạnh bên).' 
-            });
-          }
-        })
-        .catch(err => sendResponse({ success: false, message: err.message }));
-      return true;
-    }
+    init()
+      .then(() => {
+        sendResponse({ success: true, data: getSerializableState() });
+      })
+      .catch(err => {
+        sendResponse({ success: false, message: err.message });
+      });
+    return true; // Giữ kết nối async
   } else if (message.action === 'START') {
     if (!state.courseId || state.lectures.length === 0) {
       sendResponse({ success: false, message: 'Chưa chuẩn bị xong thông tin khóa học hoặc không tìm thấy bài học nào.' });
@@ -836,12 +1047,33 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     calculateProgress();
     broadcastState();
     sendResponse({ success: true });
+  } else if (message.action === 'START_BULK') {
+    if (state.isBulkRunning || state.isRunning) {
+      sendResponse({ success: false, message: 'Hệ thống tự học đang chạy.' });
+      return;
+    }
+    startBulkAutoComplete();
+    sendResponse({ success: true });
+  } else if (message.action === 'STOP_BULK') {
+    if (!state.isBulkRunning) {
+      sendResponse({ success: false, message: 'Không có tiến trình hàng loạt nào đang chạy.' });
+      return;
+    }
+    state.isBulkRunning = false;
+    state.isRunning = false;
+    state.currentLog = 'Đang tạm dừng hoàn thành hàng loạt...';
+    broadcastState();
+    sendResponse({ success: true });
   } else if (message.action === 'SETTINGS_UPDATED') {
     loadConfig().then(() => {
       // Tải lại chương trình học để áp dụng bộ lọc mới nếu có thay đổi
-      fetchCurriculum().then(() => {
+      if (state.courseId) {
+        fetchCurriculum().then(() => {
+          sendResponse({ success: true });
+        });
+      } else {
         sendResponse({ success: true });
-      });
+      }
     });
     return true; // Giữ kết nối bất đồng bộ
   }
