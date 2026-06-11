@@ -9,6 +9,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   const statusTextEl = document.getElementById('status-text');
   const errorDisplayEl = document.getElementById('error-display');
   const btnStartBulk = document.getElementById('btn-start-bulk');
+  const btnViewActiveCourse = document.getElementById('btn-view-active-course');
+  const btnBackToCourses = document.getElementById('btn-back-to-courses');
   const coursesSection = document.getElementById('courses-section');
   const coursesListEl = document.getElementById('courses-list');
   const coursesCounterEl = document.getElementById('courses-counter');
@@ -17,6 +19,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   const courseIdContainer = document.getElementById('course-id-container');
 
   let activeTab = null;
+  let viewMode = null;
+  let cachedData = null;
 
   // Lấy active tab hiện tại
   try {
@@ -186,6 +190,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
+  // Đăng ký sự kiện Click nút xem tiến trình của khóa đang chạy
+  if (btnViewActiveCourse) {
+    btnViewActiveCourse.addEventListener('click', () => {
+      viewMode = 'player';
+      if (cachedData) updateUI(cachedData);
+    });
+  }
+
+  // Đăng ký sự kiện Click nút quay lại danh sách khóa học
+  if (btnBackToCourses) {
+    btnBackToCourses.addEventListener('click', () => {
+      viewMode = 'courses';
+      if (cachedData) updateUI(cachedData);
+    });
+  }
+
   // Lắng nghe cập nhật trạng thái thời gian thực từ Content Script
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // Chỉ xử lý tin nhắn từ tab hiện tại để tránh xung đột tab khác
@@ -244,6 +264,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Cập nhật giao diện dựa trên dữ liệu trạng thái nhận được
   function updateUI(data) {
+    cachedData = data;
     const {
       courseId,
       courseTitle,
@@ -258,15 +279,35 @@ document.addEventListener('DOMContentLoaded', async () => {
       currentLog
     } = data;
 
-    // Chế độ trang ngoài player (danh sách khóa học)
-    if (!courseId) {
+    const isPlayerPage = activeTab && activeTab.url.includes('/learn/');
+
+    // Tự động gán viewMode ban đầu
+    if (viewMode === null) {
+      viewMode = isPlayerPage ? 'player' : 'courses';
+    }
+
+    // Nếu tab hiện tại là trang player, khóa cứng chế độ viewMode = 'player'
+    if (isPlayerPage) {
+      viewMode = 'player';
+    }
+
+    // 1. Chế độ hiển thị DANH SÁCH KHÓA HỌC (viewMode === 'courses')
+    if (viewMode === 'courses') {
+      // Ẩn player elements
       if (progressSection) progressSection.style.display = 'none';
       if (listSection) listSection.style.display = 'none';
       if (btnStart) btnStart.style.display = 'none';
       if (courseIdContainer) courseIdContainer.style.display = 'none';
+      if (btnBackToCourses) btnBackToCourses.style.display = 'none';
       
+      // Hiện danh sách khóa học
       if (coursesSection) coursesSection.style.display = 'flex';
       if (btnStartBulk) btnStartBulk.style.display = 'flex';
+
+      // Nút "Xem tiến trình khóa đang chạy" chỉ hiển thị khi đang chạy hàng loạt (bulk mode)
+      if (btnViewActiveCourse) {
+        btnViewActiveCourse.style.display = isBulkRunning ? 'flex' : 'none';
+      }
 
       // Cập nhật giao diện nút hoàn thành hàng loạt
       if (btnStartBulk) {
@@ -284,7 +325,6 @@ document.addEventListener('DOMContentLoaded', async () => {
           btnStartBulk.setAttribute('data-action', 'start-bulk');
           btnStartBulk.style.background = '';
           btnStartBulk.style.boxShadow = '';
-          // Chỉ bật nút nếu có ít nhất 1 khóa học chưa hoàn thành
           const hasIncomplete = enrolledCourses && enrolledCourses.some(c => Math.round(c.completionPercentage || 0) < 100);
           btnStartBulk.disabled = !hasIncomplete;
           btnStartBulk.innerHTML = `
@@ -302,16 +342,28 @@ document.addEventListener('DOMContentLoaded', async () => {
       return;
     }
 
-    // Chế độ trang player (học đơn lẻ)
+    // 2. Chế độ hiển thị CHI TIẾT LECTURES PLAYER (viewMode === 'player')
+    // Hiện player elements
     if (progressSection) progressSection.style.display = 'flex';
     if (listSection) listSection.style.display = 'flex';
-    if (btnStart) btnStart.style.display = 'flex';
     if (courseIdContainer) courseIdContainer.style.display = 'block';
-    
+
+    // Ẩn danh sách khóa học và nút xem tiến trình đang chạy
     if (coursesSection) coursesSection.style.display = 'none';
     if (btnStartBulk) btnStartBulk.style.display = 'none';
+    if (btnViewActiveCourse) btnViewActiveCourse.style.display = 'none';
 
-    // Tên khóa học và ID
+    // Nút Bắt đầu học đơn lẻ chỉ hiện khi thực sự ở trang player
+    if (btnStart) {
+      btnStart.style.display = isPlayerPage ? 'flex' : 'none';
+    }
+
+    // Nút "Quay lại danh sách khóa học" chỉ hiển thị ở ngoài trang player (nhưng đang chui vào xem chi tiết bài học của khóa đang chạy)
+    if (btnBackToCourses) {
+      btnBackToCourses.style.display = !isPlayerPage ? 'flex' : 'none';
+    }
+
+    // Cập nhật thông tin tiêu đề và ID của khóa học hiện tại (hoặc khóa đang chạy ngầm)
     courseTitleEl.textContent = courseTitle || 'Khóa học Udemy';
     courseIdEl.textContent = courseId ? `ID: ${courseId}` : 'ID: Không rõ';
 
@@ -332,11 +384,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       statusTextEl.textContent = 'Chờ lệnh từ bạn...';
     }
 
-    // Cài đặt trạng thái và giao diện nút bấm theo trạng thái chạy
+    // Cấu hình nút Bắt đầu hoàn thành (đơn lẻ)
     if (isRunning) {
-      btnStart.disabled = false; // Cho phép bấm để dừng
+      btnStart.disabled = false;
       btnStart.setAttribute('data-action', 'stop');
-      btnStart.style.background = 'linear-gradient(135deg, #ef4444 0%, #f97316 100%)'; // Màu đỏ/cam nổi bật
+      btnStart.style.background = 'linear-gradient(135deg, #ef4444 0%, #f97316 100%)';
       btnStart.style.boxShadow = '0 4px 15px rgba(239, 68, 68, 0.4)';
       btnStart.innerHTML = `
         <svg style="width: 14px; height: 14px; fill: currentColor; margin-right: 6px;" viewBox="0 0 24 24">
@@ -345,7 +397,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       `;
     } else {
       btnStart.setAttribute('data-action', 'start');
-      btnStart.style.background = ''; // Khôi phục CSS gốc
+      btnStart.style.background = '';
       btnStart.style.boxShadow = '';
       
       const actualLectures = lectures.filter(l => l.type !== 'chapter');
@@ -360,9 +412,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       );
 
       if (isFinished || isCourseCompleted || isErrorLog) {
-        btnStart.disabled = false; // Cho phép bấm để reload
+        btnStart.disabled = false;
         btnStart.setAttribute('data-action', 'reload');
-        btnStart.style.background = 'linear-gradient(135deg, #10b981 0%, #06b6d4 100%)'; // Xanh lục/cyan nổi bật
+        btnStart.style.background = 'linear-gradient(135deg, #10b981 0%, #06b6d4 100%)';
         btnStart.style.boxShadow = '0 4px 15px rgba(16, 185, 129, 0.4)';
         btnStart.innerHTML = `
           <svg style="width: 14px; height: 14px; fill: currentColor; margin-right: 6px;" viewBox="0 0 24 24">
