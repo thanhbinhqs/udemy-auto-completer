@@ -180,8 +180,43 @@ function waitForCourseId(timeout = 15000) {
   });
 }
 
+// Kiểm tra trạng thái đăng nhập của người dùng qua API /users/me/
+async function checkAuthStatus() {
+  const headers = {
+    'Content-Type': 'application/json',
+    'X-Requested-With': 'XMLHttpRequest'
+  };
+  
+  try {
+    const response = await fetch('/api-2.0/users/me/', {
+      method: 'GET',
+      headers: headers
+    });
+
+    if (!response.ok) {
+      checkAuthError(response, 'Kiểm tra phiên làm việc (Auth status check)');
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error('[Udemy Auto-Completer] Lỗi khi kiểm tra đăng nhập:', err);
+    return false;
+  }
+}
+
 // Khởi tạo lấy thông tin khóa học từ DOM
 async function init() {
+  console.log('[Udemy Auto-Completer] Kiểm tra trạng thái đăng nhập...');
+  const isLoggedIn = await checkAuthStatus();
+  if (!isLoggedIn) {
+    state.courseId = null;
+    state.lectures = [];
+    state.enrolledCourses = [];
+    state.currentLog = 'Phiên làm việc hết hạn hoặc bị logout. Vui lòng đăng nhập lại Udemy!';
+    broadcastState();
+    return;
+  }
+
   const isPlayerPage = location.pathname.includes('/learn/');
   
   if (!isPlayerPage) {
