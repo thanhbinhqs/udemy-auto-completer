@@ -11,6 +11,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const btnStartBulk = document.getElementById('btn-start-bulk');
   const btnViewActiveCourse = document.getElementById('btn-view-active-course');
   const btnBackToCourses = document.getElementById('btn-back-to-courses');
+  const btnReloadPage = document.getElementById('btn-reload-page');
   const coursesSection = document.getElementById('courses-section');
   const coursesListEl = document.getElementById('courses-list');
   const coursesCounterEl = document.getElementById('courses-counter');
@@ -95,6 +96,17 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     });
   });
+
+  // Đăng ký sự kiện Click nút bấm tải lại trang ngay (khi hết hạn phiên)
+  if (btnReloadPage) {
+    btnReloadPage.addEventListener('click', () => {
+      if (!activeTab) return;
+      statusTextEl.textContent = 'Đang tải lại trang...';
+      chrome.tabs.reload(activeTab.id, {}, () => {
+        window.close(); // Đóng popup sau khi F5 tab
+      });
+    });
+  }
 
   // Kết nối và lấy trạng thái từ Content Script
   initConnection();
@@ -276,8 +288,40 @@ document.addEventListener('DOMContentLoaded', async () => {
       isFinished,
       isRunning,
       isBulkRunning,
-      currentLog
+      currentLog,
+      authError
     } = data;
+
+    // Kiểm tra trạng thái lỗi xác thực (logout/hết hạn phiên)
+    if (authError) {
+      // Ẩn tất cả các nút điều khiển thông thường
+      if (btnStart) btnStart.style.display = 'none';
+      if (btnStartBulk) btnStartBulk.style.display = 'none';
+      if (btnViewActiveCourse) btnViewActiveCourse.style.display = 'none';
+      if (btnBackToCourses) btnBackToCourses.style.display = 'none';
+      
+      // Hiển thị nút tải lại trang
+      if (btnReloadPage) btnReloadPage.style.display = 'flex';
+      
+      // Hiển thị text log báo lỗi xác thực
+      courseTitleEl.textContent = 'Phiên làm việc hết hạn';
+      courseIdEl.textContent = 'Vui lòng đăng nhập lại';
+      if (currentLog) statusTextEl.textContent = currentLog;
+      
+      // Vẫn vẽ danh sách khóa học hoặc player theo dạng "mờ"
+      if (progressSection) progressSection.style.opacity = '0.4';
+      if (listSection) listSection.style.opacity = '0.4';
+      if (coursesSection) coursesSection.style.opacity = '0.4';
+      return; // Dừng xử lý giao diện thông thường ở dưới
+    } else {
+      // Reset opacity
+      if (progressSection) progressSection.style.opacity = '1';
+      if (listSection) listSection.style.opacity = '1';
+      if (coursesSection) coursesSection.style.opacity = '1';
+      
+      // Ẩn nút tải lại trang trong điều kiện bình thường
+      if (btnReloadPage) btnReloadPage.style.display = 'none';
+    }
 
     const isPlayerPage = activeTab && activeTab.url.includes('/learn/');
 

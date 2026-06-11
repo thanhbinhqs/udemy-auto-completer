@@ -10,7 +10,8 @@ const state = {
   currentLog: 'Sẵn sàng...',
   completedCount: 0,
   totalCount: 0,
-  progressPercent: 0
+  progressPercent: 0,
+  authError: false // Cờ phát hiện lỗi xác thực
 };
 
 // Cấu hình mặc định (có thể được thay đổi trong Setting)
@@ -66,6 +67,11 @@ function resetState() {
   state.completedCount = 0;
   state.totalCount = 0;
   state.progressPercent = 0;
+  state.authError = false;
+  if (reloadTimer) {
+    clearInterval(reloadTimer);
+    reloadTimer = null;
+  }
 }
 
 // Tìm kiếm Course ID bằng nhiều cách khác nhau để chống việc đổi tên class từ Udemy
@@ -204,6 +210,39 @@ async function checkAuthStatus() {
   }
 }
 
+let reloadTimer = null;
+
+// Xử lý khi phát hiện lỗi xác thực (logout/hết hạn)
+function handleAuthError() {
+  if (state.authError) return; // Tránh chạy song song nhiều đếm ngược
+  
+  state.authError = true;
+  state.isRunning = false;
+  state.isBulkRunning = false;
+  
+  // Trả trạng thái các bài học đang chạy về pending
+  state.lectures.forEach(l => {
+    if (l.status === 'running') l.status = 'pending';
+  });
+
+  let secondsLeft = 5;
+  state.currentLog = `Phiên làm việc hết hạn hoặc bị logout. Tự động tải lại trang sau ${secondsLeft} giây...`;
+  broadcastState();
+
+  if (reloadTimer) clearInterval(reloadTimer);
+  reloadTimer = setInterval(() => {
+    secondsLeft--;
+    if (secondsLeft <= 0) {
+      clearInterval(reloadTimer);
+      console.log('[Udemy Auto-Completer] Đang tự động tải lại trang do hết hạn phiên làm việc...');
+      location.reload();
+    } else {
+      state.currentLog = `Phiên làm việc hết hạn hoặc bị logout. Tự động tải lại trang sau ${secondsLeft} giây...`;
+      broadcastState();
+    }
+  }, 1000);
+}
+
 // Khởi tạo lấy thông tin khóa học từ DOM
 async function init() {
   console.log('[Udemy Auto-Completer] Kiểm tra trạng thái đăng nhập...');
@@ -212,8 +251,7 @@ async function init() {
     state.courseId = null;
     state.lectures = [];
     state.enrolledCourses = [];
-    state.currentLog = 'Phiên làm việc hết hạn hoặc bị logout. Vui lòng đăng nhập lại Udemy!';
-    broadcastState();
+    handleAuthError();
     return;
   }
 
@@ -651,9 +689,7 @@ function checkAuthError(response, contextMessage) {
       console.error('Không thể đọc nội dung Response Body:', err);
     });
 
-    state.currentLog = 'Phiên làm việc hết hạn hoặc bị logout. Vui lòng đăng nhập lại Udemy!';
-    state.isRunning = false; // Tự động dừng vòng lặp nếu lỗi đăng nhập/hết hạn token
-    broadcastState();
+    handleAuthError();
     return true;
   }
   return false;
@@ -1056,7 +1092,8 @@ function getSerializableState() {
     isFinished: state.isFinished,
     isRunning: state.isRunning,
     isBulkRunning: state.isBulkRunning,
-    currentLog: state.currentLog
+    currentLog: state.currentLog,
+    authError: state.authError
   };
 }
 
