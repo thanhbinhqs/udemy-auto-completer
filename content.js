@@ -365,6 +365,7 @@ async function startBulkAutoComplete() {
     const course = incompleteCourses[idx];
     state.courseId = course.id;
     state.courseTitle = course.title;
+    state.lectures = []; // Reset để tránh rò rỉ dữ liệu của khóa trước
     
     state.currentLog = `[Khóa ${idx + 1}/${incompleteCourses.length}] Bắt đầu: ${course.title}`;
     broadcastState();
@@ -378,7 +379,37 @@ async function startBulkAutoComplete() {
     }
 
     // 2. Tự động hoàn thành các bài học trong khóa học hiện tại
+    const actualCount = state.lectures.filter(l => l.type !== 'chapter').length;
+    const completedCount = state.lectures.filter(l => l.type !== 'chapter' && l.status === 'done').length;
     const pendingLectures = state.lectures.filter(l => l.status === 'pending');
+    
+    state.currentLog = `[Khóa ${idx + 1}/${incompleteCourses.length}] ${course.title} -> Đã hoàn thành ${completedCount}/${actualCount} bài. Bỏ qua các bài đã học...`;
+    broadcastState();
+    await sleep(1500);
+
+    if (pendingLectures.length === 0) {
+      console.log(`[Udemy Auto-Completer] Không có bài học chưa hoàn thành cho ${course.title}. Chuyển sang khóa tiếp theo.`);
+      
+      // Cập nhật lại % hoàn thành của khóa học hiện tại trong danh sách enrolledCourses
+      calculateProgress();
+      const currentCourseInList = state.enrolledCourses.find(c => c.id === course.id);
+      if (currentCourseInList) {
+        currentCourseInList.completionPercentage = state.progressPercent;
+      }
+      broadcastState();
+
+      // Sau khi kết thúc một khóa học, nghỉ 5 giây trước khi sang khóa học tiếp theo để tránh spam
+      if (idx < incompleteCourses.length - 1 && state.isBulkRunning) {
+        for (let sec = 5; sec > 0; sec--) {
+          if (!state.isBulkRunning) break;
+          state.currentLog = `Đã xong khóa học! Chuyển sang khóa học sau trong ${sec} giây...`;
+          broadcastState();
+          await sleep(1000);
+        }
+      }
+      continue;
+    }
+
     console.log(`[Udemy Auto-Completer] Processing ${pendingLectures.length} pending items for ${course.title}`);
 
     for (let i = 0; i < pendingLectures.length; i++) {
